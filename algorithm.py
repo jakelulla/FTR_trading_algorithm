@@ -89,7 +89,10 @@ player.calculate_total_score()
 print("Total Score:", player.total_score)
 
 # Analyze trade scenario
-players_side_a = [player.total_score, 90]
-players_side_b = [85, 95]
+players_side_a = [player.total_score, 40]
+players_side_b = [player.total_score, 100]
 trade_result = player.analyze_trade(players_side_a, players_side_b)
 print("Trade Scores (Side A, Side B):", trade_result)
+
+
+# n1, n2 
