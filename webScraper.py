@@ -1,53 +1,48 @@
-import os
 import requests
 from bs4 import BeautifulSoup
 
-# Base URL of the GitHub repository
-base_url = 'https://github.com/hvpkod/NFL-Data/tree/main/NFL-data-Players/2024'
-
-# Function to get CSV links from a specific page
-def get_csv_links(page_url):
-    response = requests.get(page_url)
-    soup = BeautifulSoup(response.content, 'html.parser')
-
-    # Find all links that end with '.csv'
-    csv_links = []
-    for a_tag in soup.find_all('a', href=True):
-        href = a_tag['href']
-        if href.endswith('.csv'):
-            csv_links.append(f"https://github.com{href}")
-
-    return csv_links
-
-# Function to download and save CSV files
-def download_csv(csv_link):
-    # Extract the raw content URL from GitHub
-    raw_url = csv_link.replace('github.com', 'raw.githubusercontent.com').replace('tree/main', '')
-    response = requests.get(raw_url)
+# Function to extract data from a single week (check table extraction)
+def scrape_week_data_single_page(week_number):
+    url = f'https://fantasy.espn.com/football/leaders?statSplit=singleScoringPeriod&scoringPeriodId={week_number}'
     
-    # Save the file locally
-    filename = csv_link.split('/')[-1]
-    with open(filename, 'wb') as f:
-        f.write(response.content)
-    print(f"Downloaded: {filename}")
-
-# Main function to scrape the pages
-def scrape_csv_files():
-    # Get the CSV links from the main page
-    csv_links = get_csv_links(base_url)
+    response = requests.get(url)
+    soup = BeautifulSoup(response.text, 'html.parser')
     
-    # Download CSVs from the main page
-    for link in csv_links:
-        download_csv(link)
-
-    # Loop through the side links (1 to n, adjust n based on the total number of side links)
-    for x in range(1, 10):  # Assuming the side links range from 1 to 9, adjust as needed
-        side_link = f'https://github.com/hvpkod/NFL-Data/tree/main/NFL-data-Players/2024/{x}'
-        print(f"Scraping {side_link}...")
-        side_csv_links = get_csv_links(side_link)
+    # Print out the raw HTML to inspect the structure (for debugging)
+    print(soup.prettify())  # This will output the HTML structure of the page
+    
+    # Find the table containing the player data
+    table = soup.find('table', {'class': 'Table Table--align-right'})
+    if not table:
+        print("Table not found!")
+        return []
+    
+    # Print the table HTML to ensure we have found it
+    print(table.prettify())  # Print the entire table to inspect its structure
+    
+    rows = table.find_all('tr')[1:]  # Skip header row
+    
+    week_data = []
+    
+    # Extract data from each row in the table
+    for row in rows:
+        columns = row.find_all('td')
+        player_name = columns[0].get_text(strip=True)
+        opp = columns[1].get_text(strip=True)
+        fpts = columns[2].get_text(strip=True)
+        position = columns[0].find('span', {'class': 'PlayerHeader__Position'}).get_text(strip=True) if columns[0].find('span', {'class': 'PlayerHeader__Position'}) else None
         
-        for link in side_csv_links:
-            download_csv(link)
+        # Store the data for the current player in the week
+        week_data.append({
+            'Player': player_name,
+            'Position': position,
+            'Week': week_number,
+            'OPP': opp,
+            'FPTS': fpts
+        })
+    
+    return week_data
 
-# Run the scraper
-scrape_csv_files()
+# Test on Week 1 for debugging
+week_1_data = scrape_week_data_single_page(1)
+print(week_1_data)  # Output the collected data for Week 1
