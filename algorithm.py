@@ -1,159 +1,103 @@
-import numpy as np
+import os
+import requests
 import pandas as pd
+from bs4 import BeautifulSoup
 
-k = 0.5
-k1 = 2
-rankingWeight = 0.65
+# Base URL of the GitHub repository
+base_url = 'https://github.com/hvpkod/NFL-Data/tree/main/NFL-data-Players/2024'
 
-class Player: 
-    def __init__(self, gameData, positionAvg, positionDev, zMin, zMax, ranking, numPlayers):
-        self.gameData = gameData
-        self.df = pd.DataFrame(self.gameData)
-        self.positionAvg = positionAvg
-        self.positionDev = positionDev
-        self.zMin = zMin
-        self.zMax = zMax 
-        self.ranking = ranking
-        self.numPlayers = numPlayers
-        self.avgPoints = 0 
-        self.zScore = 0
-        self.pointScore = 0
-        self.streakiness = 0
-        self.rankingScore = 0
-        self.totalScore = 0
+# Function to get CSV links from a specific page
+def get_csv_links(page_url):
+    response = requests.get(page_url)
+    soup = BeautifulSoup(response.content, 'html.parser')
 
-        self.avgPointsCalculator()
-        self.streakinessCalculator()
-        self.zScoreCalculator()
-        self.pointScoreCalculator()
-        self.rankingScoreCalculator()
-        self.totalScoreCalculator()
+    # Find all links that end with '.csv'
+    csv_links = []
+    for a_tag in soup.find_all('a', href=True):
+        href = a_tag['href']
+        if href.endswith('.csv'):
+            csv_links.append(f"https://github.com{href}")
 
-    def avgPointsCalculator(self):
-        length = len(self.df)
-        totalPoints = 0 
-        totalGames = length + 1.5 
-        points = self.df.iloc[:, 0]
-        strength = self.df.iloc[:, 1]
-        # Convert each to strength factor 
-        strength = strength.apply(lambda x: 1 - ((k * x - k) / 31))
-        # Adjust points
-        points = points * strength
+    return csv_links
 
-        # Recent games with 1.5 weight
-        totalPoints = points.iloc[0:length-3].sum()
-        totalPoints += points.iloc[length-3:].sum() * 1.5
-        self.avgPoints = totalPoints / totalGames
+# Function to download CSV file
+def download_csv(csv_link, folder_path='csv_files'):
+    # Extract the raw content URL from GitHub
+    raw_url = csv_link.replace('github.com', 'raw.githubusercontent.com').replace('tree/main', '')
+    response = requests.get(raw_url)
     
-    def streakinessCalculator(self):
-        q1 = self.df.iloc[:, 0].quantile(0.25)
-        lowOutlierCount = (self.df.iloc[:, 0] < q1).sum()
-        lowOutlierPct = lowOutlierCount / len(self.df)
-        self.streakiness = lowOutlierPct
+    # Ensure folder exists
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
 
-    def zScoreCalculator(self):
-        self.zScore = (self.avgPoints - self.positionAvg) / self.positionDev
-
-    # Convert z-score to a rating out of 100
-    def pointScoreCalculator(self):
-        adjustedZScore = self.zScore + self.zMin
-        self.pointScore = (adjustedZScore * 100) / self.zMax
-        self.pointScore *= self.streakiness
+    filename = csv_link.split('/')[-1]
+    filepath = os.path.join(folder_path, filename)
     
-    def rankingScoreCalculator(self):
-        percentile = (self.numPlayers - self.ranking) / (self.numPlayers - 1)
-        self.rankingScore = percentile * 100
+    # Save the file locally
+    with open(filepath, 'wb') as f:
+        f.write(response.content)
+    
+    print(f"Downloaded: {filename}")
+    return filepath
 
-    def totalScoreCalculator(self):
-        pointWeight = (1 - rankingWeight) * self.pointScore
-        rankingWeightWeighted = rankingWeight * self.rankingScore
-        self.totalScore = pointWeight + rankingWeightWeighted
+# Function to process the CSV file and return a DataFrame
+def process_csv(filepath, week, positions=['RB', 'WR', 'QB', 'TE']):
+    # Load CSV into a DataFrame
+    df = pd.read_csv(filepath)
+    
+    # Filter by position
+    df = df[df['Pos'].isin(positions)]
+    
+    # Select relevant columns and add 'Week' column
+    selected_columns = [
+        'PlayerName', 'Pos', 'PlayerOpponent', 'PassingYDS', 'PassingTD', 'PassingInt', 
+        'RushingYDS', 'RushingTD', 'ReceivingRec', 'ReceivingYDS', 'ReceivingTD', 'RetTD', 
+        'FumTD', '2PT', 'Fum'
+    ]
+    
+    df_filtered = df[selected_columns]
+    
+    # Add the 'Week' column based on the input week
+    df_filtered['Week'] = week
+    
+    # Remove '@' symbol from 'PlayerOpponent' column
+    df_filtered['PlayerOpponent'] = df_filtered['PlayerOpponent'].str.replace('@', '', regex=False)
+    
+    return df_filtered
 
+# Main function to scrape the pages and process CSVs
+def scrape_and_process_csvs():
+    all_data = []  # List to store all processed data
+    
+    # Loop through the side links (1 to n, adjust n based on the total number of side links)
+    for x in range(1, 10):  # Assuming the side links range from 1 to 9, adjust as needed
+        side_link = f'https://github.com/hvpkod/NFL-Data/tree/main/NFL-data-Players/2024/{x}'
+        print(f"Scraping {side_link}...")
+        
+        # Get CSV links from the side link
+        side_csv_links = get_csv_links(side_link)
+        
+        # Download and process each CSV
+        for csv_link in side_csv_links:
+            # Download the CSV file
+            filepath = download_csv(csv_link)
+            
+            # Process the CSV file for the specific week (week number is the same as 'x')
+            week_data = process_csv(filepath, week=x)
+            
+            # Append processed data to all_data list
+            all_data.append(week_data)
 
-class Trade: 
-    def __init__(self, teamA, teamB):
-        # Lists of players from each side of the trade
-        self.teamA = teamA
-        self.teamB = teamB
-        # Adjusted sums of players
-        self.sumA = 0
-        self.sumB = 0
-        self.sumTeams(k1)
+    # Combine all data into a single DataFrame
+    final_df = pd.concat(all_data, ignore_index=True)
+    
+    # Optional: Save the final DataFrame to a CSV file
+    final_df.to_csv('nfl_players_data.csv', index=False)
+    
+    print("Data processing complete. Saved as 'nfl_players_data.csv'.")
+    
+    return final_df
 
-    def sumTeams(self, k):
-        lengthA = len(self.teamA)
-        lengthB = len(self.teamB)
-        for i in range(lengthA):
-            self.sumA += self.teamA[i].totalScore
-        for i in range(lengthB):
-            self.sumB += self.teamB[i].totalScore
-        # Adjust for unequal player counts
-        factor = (lengthB / lengthA) ** (1 / k)
-        self.sumA *= factor
-
-
-
-# testing
-#WR
-player1_data = pd.DataFrame({
-    'points': [10, 20, 15, 30, 25, 18, 22],
-    'schedule_strength': [5, 10, 8, 20, 12, 15, 10]
-})
-
-#WR
-player2_data = pd.DataFrame({
-    'points': [12, 17, 9, 28, 23, 14, 19],
-    'schedule_strength': [7, 11, 5, 21, 13, 14, 9]
-})
-
-#TE
-player3_data = pd.DataFrame({
-    'points': [8, 25, 13, 20, 30, 15, 10],
-    'schedule_strength': [3, 8, 9, 25, 15, 16, 11]
-})
-
-#QB
-player4_data = pd.DataFrame({
-    'points': [14, 18, 16, 29, 26, 20, 12],
-    'schedule_strength': [6, 9, 7, 18, 14, 10, 8]
-})
-
-#RB
-player5_data = pd.DataFrame({
-    'points': [5, 19, 22, 27, 24, 17, 11],
-    'schedule_strength': [4, 12, 6, 22, 16, 13, 10]
-})
-
-#WR
-player6_data = pd.DataFrame({
-    'points': [11, 15, 10, 23, 21, 16, 14],
-    'schedule_strength': [8, 10, 7, 19, 12, 18, 9]
-})
-wrAvg = 13
-rbAvg = 17
-qbAvg = 18
-teAvg = 11
-wrDev = 2.5
-rbDev = 2
-qbDev =1
-teDev = 3
-zMin = -2.5
-zMax = 2.5
-numPlayers = 6
-#init: gameData,  positionAvg, positionDev, zMin, zMax, ranking, numPlayers
-player1 = Player(player1_data, wrAvg, wrDev, zMin, zMax, 3, numPlayers)
-player2 = Player(player2_data, wrAvg, wrDev, zMin, zMax, 4, numPlayers)
-player3 = Player(player3_data, teAvg, teDev, zMin, zMax, 5, numPlayers)
-player4 = Player(player4_data, qbAvg, qbDev, zMin, zMax, 1, numPlayers)
-player5 = Player(player5_data, rbAvg, rbDev, zMin, zMax, 2, numPlayers)
-player6 = Player(player6_data, wrAvg, wrDev, zMin, zMax, 6, numPlayers)
-
-
-teamA = [player2, player4]
-teamB = [player5, player1]
-
-# Perform Trade
-trade1 = Trade(teamA, teamB)
-print("Trade 1:")
-print("Team A Score:", trade1.sumA)
-print("Team B Score:", trade1.sumB)
+# Run the scraper and process CSV files
+final_df = scrape_and_process_csvs()
+print(final_df.head())  # Print the first few rows of the final DataFrame
